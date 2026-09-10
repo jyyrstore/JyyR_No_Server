@@ -1,0 +1,2 @@
+import Link from 'next/link';
+export function MobileNav(){return <nav className="mb-4 flex gap-2 overflow-x-auto pb-1 lg:hidden">{[['/dashboard','Dashboard'],['/numbers','Numbers'],['/messages','Messages'],['/webhooks','Webhooks'],['/api-keys','API Keys'],['/billing','Billing']].map(([h,l])=><Link key={h} href={h} className="shrink-0 rounded-xl border border-white/10 bg-white/[.03] px-3 py-2 text-xs">{l}</Link>)}</nav>}

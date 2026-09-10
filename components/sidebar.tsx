@@ -1,0 +1,3 @@
+import Link from 'next/link';
+const links = [['/dashboard','Dashboard'],['/numbers','Numbers'],['/messages','Messages'],['/webhooks','Webhooks'],['/api-keys','API Keys'],['/billing','Billing'],['/settings','Settings']];
+export function Sidebar() { return <aside className="glass hidden w-56 shrink-0 p-3 lg:block"><div className="px-3 py-3 text-xs uppercase tracking-[.18em] muted">Workspace</div>{links.map(([href,label])=><Link key={href} href={href} className="block rounded-xl px-3 py-2.5 text-sm hover:bg-white/5">{label}</Link>)}<div className="my-3 border-t border-white/5"/><Link href="/admin" className="block rounded-xl px-3 py-2.5 text-sm hover:bg-white/5">Admin</Link></aside>; }
