@@ -1,28 +1,43 @@
 import { z } from 'zod';
 
+const blankToUndefined = (value: unknown) => {
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  return trimmed === '' ? undefined : trimmed;
+};
+
 const publicEnvSchema = z.object({
   NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(10),
 });
 
 const serverEnvSchema = publicEnvSchema.extend({
-  SUPABASE_SERVICE_ROLE_KEY: z.string().optional(),
-  DATABASE_URL: z.string().optional(),
+  SUPABASE_SERVICE_ROLE_KEY: z.preprocess(blankToUndefined, z.string().min(10).optional()),
+  DATABASE_URL: z.preprocess(blankToUndefined, z.string().url().optional()),
   DEMO_MODE: z.coerce.boolean().default(false),
   API_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(60),
   APP_BASE_URL: z.string().url().default('http://localhost:3000'),
-  TWILIO_ACCOUNT_SID: z.string().optional(),
-  TWILIO_AUTH_TOKEN: z.string().optional(),
-  TWILIO_NUMBER_TYPE: z.enum(['Local', 'Mobile', 'TollFree']).default('Local'),
-  TELNYX_API_KEY: z.string().optional(),
-  TELNYX_PUBLIC_KEY: z.string().optional(),
-  TELNYX_MESSAGING_PROFILE_ID: z.string().optional(),
-  TELNYX_CONNECTION_ID: z.string().optional(),
-  VONAGE_API_KEY: z.string().optional(),
-  VONAGE_API_SECRET: z.string().optional(),
-  VONAGE_SIGNATURE_SECRET: z.string().optional(),
-  VONAGE_NUMBER_TYPE: z.enum(['landline', 'mobile-lvn', 'landline-toll-free']).default('mobile-lvn'),
-  VONAGE_NUMBER_FEATURES: z.string().default('SMS'),
+  TWILIO_ACCOUNT_SID: z.preprocess(blankToUndefined, z.string().optional()),
+  TWILIO_AUTH_TOKEN: z.preprocess(blankToUndefined, z.string().optional()),
+  TWILIO_NUMBER_TYPE: z.preprocess(
+    blankToUndefined,
+    z.enum(['Local', 'Mobile', 'TollFree']).optional(),
+  ).default('Local'),
+  TELNYX_API_KEY: z.preprocess(blankToUndefined, z.string().optional()),
+  TELNYX_PUBLIC_KEY: z.preprocess(blankToUndefined, z.string().optional()),
+  TELNYX_MESSAGING_PROFILE_ID: z.preprocess(blankToUndefined, z.string().optional()),
+  TELNYX_CONNECTION_ID: z.preprocess(blankToUndefined, z.string().optional()),
+  VONAGE_API_KEY: z.preprocess(blankToUndefined, z.string().optional()),
+  VONAGE_API_SECRET: z.preprocess(blankToUndefined, z.string().optional()),
+  VONAGE_SIGNATURE_SECRET: z.preprocess(blankToUndefined, z.string().optional()),
+  VONAGE_NUMBER_TYPE: z.preprocess(
+    blankToUndefined,
+    z.enum(['landline', 'mobile-lvn', 'landline-toll-free']).optional(),
+  ).default('mobile-lvn'),
+  VONAGE_NUMBER_FEATURES: z.preprocess(
+    blankToUndefined,
+    z.string().default('SMS'),
+  ),
 });
 
 export function publicEnv() {
