@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
+const read = (path) => fs.readFileSync(path, 'utf8');
+
 test('number order route requires Idempotency-Key', () => {
   const source = fs.readFileSync('app/api/v1/numbers/route.ts', 'utf8');
   assert.match(source, /Idempotency-Key/);
@@ -39,4 +41,28 @@ test('all public tables are expected to remain RLS protected', () => {
     'utf8',
   );
   assert.match(migration, /row level security/i);
+});
+
+test('webhook signing secret is encrypted at rest and delivery worker is wired', () => {
+  const env = read('lib/env.ts');
+  const route = read('app/api/v1/webhooks/route.ts');
+  const worker = read('services/webhook-delivery.ts');
+  const inbound = read('services/inbound-webhook.ts');
+  assert.match(env, /WEBHOOK_ENCRYPTION_KEY/);
+  assert.match(route, /secret_ciphertext/);
+  assert.match(route, /encryptWebhookSecret/);
+  assert.match(worker, /aes-256-gcm/);
+  assert.match(worker, /x-jyyr-signature/);
+  assert.match(worker, /claim_webhook_deliveries/);
+  assert.match(inbound, /dispatchWebhookDeliveries/);
+});
+
+test('queue migration contains claim locking and duplicate event protection', () => {
+  const migration = read('supabase/migrations/20260911200253_inbound_events_and_webhook_queue.sql');
+  const queueMigration = read('supabase/migrations/20260911154640_webhook_delivery_secret_ciphertext.sql');
+  assert.match(migration, /enqueue_inbound_message_events/);
+  assert.match(migration, /notifications/);
+  assert.match(queueMigration, /claim_webhook_deliveries/);
+  assert.match(queueMigration, /message_events_message_event_type_key/);
+  assert.match(queueMigration, /SKIP LOCKED/);
 });
