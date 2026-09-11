@@ -35,7 +35,7 @@ test('reconciliation never auto-refunds ambiguous missing external ids', () => {
 
 test('all public tables are expected to remain RLS protected', () => {
   const migration = fs.readFileSync(
-    'supabase/migrations/20260910_000001_canonical_schema.sql',
+    'supabase/migrations/20260910090537_canonical_schema_20260910_v2.sql',
     'utf8',
   );
   assert.match(migration, /row level security/i);
