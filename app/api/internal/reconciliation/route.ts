@@ -1,0 +1,130 @@
+import { NextResponse } from 'next/server';
+import { createAdminClient } from '@/lib/supabase-admin';
+import { getProvider } from '@/services/provider-registry';
+
+const BATCH_SIZE = 25;
+const STALE_AFTER_MINUTES = 15;
+
+type ReconciliationOrder = {
+  id: string;
+  provider_id: string;
+  phone_number: string;
+  country_code: string;
+  provider_number_id: string | null;
+  status: 'reserved' | 'provisioning' | 'succeeded' | 'refunded' | 'requires_reconciliation';
+};
+
+function authorized(request: Request): boolean {
+  const secret = process.env.CRON_SECRET;
+  return Boolean(secret) && request.headers.get('authorization') === `Bearer ${secret}`;
+}
+
+export async function GET(request: Request) {
+  if (!authorized(request)) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const admin = createAdminClient();
+  const cutoff = new Date(Date.now() - STALE_AFTER_MINUTES * 60_000).toISOString();
+
+  const { data: orders, error } = await admin
+    .from('number_orders')
+    .select('id, provider_id, phone_number, country_code, provider_number_id, status')
+    .in('status', ['reserved', 'provisioning', 'requires_reconciliation'])
+    .lt('created_at', cutoff)
+    .order('created_at', { ascending: true })
+    .limit(BATCH_SIZE);
+
+  if (error) return NextResponse.json({ error: 'Unable to load reconciliation queue' }, { status: 500 });
+
+  const results: Array<Record<string, unknown>> = [];
+
+  for (const order of (orders ?? []) as ReconciliationOrder[]) {
+    try {
+      const { data: numberRow, error: numberLookupError } = await admin
+        .from('phone_numbers')
+        .select('id')
+        .eq('provider_id', order.provider_id)
+        .eq('provider_number_id', order.provider_number_id ?? '')
+        .maybeSingle();
+
+      if (numberLookupError) throw numberLookupError;
+
+      // DB row exists: finalize the order without touching the provider.
+      if (numberRow) {
+        const { data: completed, error: completeError } = await admin.rpc(
+          'complete_number_order',
+          { p_order_id: order.id },
+        );
+        if (completeError) throw completeError;
+        results.push({ order_id: order.id, action: 'completed', status: completed });
+        continue;
+      }
+
+      // Provider provisioning never started for a stale reservation.
+      if (order.status === 'reserved' && !order.provider_number_id) {
+        const { data: refunded, error: refundError } = await admin.rpc(
+          'refund_number_order',
+          {
+            p_order_id: order.id,
+            p_error_message: 'Stale reservation reconciliation',
+          },
+        );
+        if (refundError) throw refundError;
+        results.push({ order_id: order.id, action: 'refunded_stale_reservation', status: refunded });
+        continue;
+      }
+
+      // No external id means the provider outcome is ambiguous. Never refund
+      // automatically: retain the case for provider-side/manual reconciliation.
+      if (!order.provider_number_id) {
+        const { data: marked, error: markError } = await admin.rpc(
+          'mark_number_order_reconciliation_required',
+          {
+            p_order_id: order.id,
+            p_error_message: 'Provider external id missing; outcome is ambiguous',
+          },
+        );
+        if (markError) throw markError;
+        results.push({ order_id: order.id, action: 'manual_reconciliation_required', status: marked });
+        continue;
+      }
+
+      const { data: providerRow, error: providerError } = await admin
+        .from('providers')
+        .select('slug')
+        .eq('id', order.provider_id)
+        .maybeSingle();
+
+      if (providerError) throw providerError;
+      if (!providerRow?.slug) throw new Error('Provider configuration missing');
+
+      const provider = getProvider(providerRow.slug);
+      await provider.releaseNumber(order.provider_number_id, order.country_code);
+
+      const { data: refunded, error: refundError } = await admin.rpc(
+        'refund_number_order',
+        {
+          p_order_id: order.id,
+          p_error_message: 'Released orphaned provider number during reconciliation',
+        },
+      );
+      if (refundError) throw refundError;
+
+      results.push({ order_id: order.id, action: 'released_and_refunded', status: refunded });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Reconciliation failed';
+
+      await admin.rpc('mark_number_order_reconciliation_required', {
+        p_order_id: order.id,
+        p_error_message: message,
+      });
+
+      results.push({
+        order_id: order.id,
+        action: 'retry_later',
+        status: 'requires_reconciliation',
+      });
+    }
+  }
+
+  return NextResponse.json({ ok: true, processed: results.length, results });
+}
