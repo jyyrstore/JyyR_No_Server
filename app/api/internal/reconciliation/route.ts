@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { getProvider } from '@/services/provider-registry';
+import { dispatchDueWebhookDeliveries } from '@/services/webhook-delivery';
 
 const BATCH_SIZE = 25;
 const STALE_AFTER_MINUTES = 15;
@@ -126,5 +127,18 @@ export async function GET(request: Request) {
     }
   }
 
-  return NextResponse.json({ ok: true, processed: results.length, results });
+  let webhookProcessed = 0;
+  try {
+    webhookProcessed = await dispatchDueWebhookDeliveries(25);
+  } catch {
+    // Number reconciliation remains authoritative; webhook retries can be
+    // retried on the next scheduled worker invocation.
+  }
+
+  return NextResponse.json({
+    ok: true,
+    processed: results.length,
+    webhook_processed: webhookProcessed,
+    results,
+  });
 }

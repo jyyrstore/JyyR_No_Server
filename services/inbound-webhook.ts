@@ -1,5 +1,6 @@
 import { createAdminClient } from '@/lib/supabase-admin';
 import type { ProviderMessage, NumberProvider } from '@/types/provider';
+import { dispatchWebhookDeliveries } from '@/services/webhook-delivery';
 
 export async function persistInboundMessage(providerSlug: string, message: ProviderMessage) {
   const admin = createAdminClient();
@@ -50,5 +51,23 @@ export async function handleProviderWebhook(
   const message = provider.parseInboundWebhook?.(payload, request.headers) ?? null;
   if (!message) return new Response(JSON.stringify({ ok: true, ignored: true }), { status: 200, headers: { 'content-type': 'application/json' } });
   const result = await persistInboundMessage(providerSlug, message);
+  if (!result.duplicate && result.id) {
+    const { data: event } = await createAdminClient()
+      .from('message_events')
+      .select('id')
+      .eq('message_id', result.id)
+      .eq('event_type', 'sms.received')
+      .maybeSingle();
+    const { data: deliveries, error: deliveryLookupError } = event
+      ? await createAdminClient()
+        .from('webhook_deliveries')
+        .select('id')
+        .eq('request_id', event.id)
+        .eq('status', 'pending')
+      : { data: [], error: null };
+    if (!deliveryLookupError && deliveries?.length) {
+      await dispatchWebhookDeliveries(deliveries.map((d: { id: string }) => d.id));
+    }
+  }
   return new Response(JSON.stringify({ ok: true, duplicate: result.duplicate }), { status: 200, headers: { 'content-type': 'application/json' } });
 }

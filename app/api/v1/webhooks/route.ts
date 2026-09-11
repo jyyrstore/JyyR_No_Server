@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase-admin';
 import { authenticateApiKey, hasApiKeyPermission } from '@/services/api-key-auth';
 import { generateSecret, isSafeWebhookUrl, sha256 } from '@/services/security';
 import { webhookSchema } from '@/validators/webhook';
+import { encryptWebhookSecret } from '@/services/webhook-delivery';
 
 async function getSessionUser() {
   const supabase = await createServerSupabaseClient();
@@ -45,6 +46,7 @@ export async function POST(request: Request) {
     event: parsed.data.event,
     secret_hash: sha256(secret),
     secret_prefix: secret.slice(0, 12),
+    secret_ciphertext: encryptWebhookSecret(secret),
     status: 'active',
   }).select('id,endpoint_url,event,status,secret_prefix,created_at').single();
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });

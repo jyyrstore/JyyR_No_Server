@@ -21,4 +21,3 @@ tsconfig.tsbuildinfo
 # Supabase local temporary files
 supabase/.temp/
 supabase/migrations.backup.*/
-.vercel
