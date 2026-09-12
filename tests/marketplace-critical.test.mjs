@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 
-const rpc=fs.readFileSync('supabase/migrations/20260912101500_marketplace_rpc_phone_guard.sql','utf8');
+const rpc=fs.readFileSync('supabase/migrations/20260913060000_harden_otp_activation_domain.sql','utf8');
 const migration=fs.readFileSync('supabase/migrations/20260912100000_marketplace_otp_domain.sql','utf8');
-const orderRoute=fs.readFileSync('app/api/orders/route.ts','utf8');
+const orderRoute=fs.readFileSync('app/api/v1/activations/route.ts','utf8');
 const payment=fs.readFileSync('app/api/webhooks/payment/route.ts','utf8');
 
 test('market order schema has required lifecycle and ownership fields',()=>{
@@ -12,12 +12,12 @@ test('market order schema has required lifecycle and ownership fields',()=>{
  for(const x of ['pending','waiting','sms_received','completed','cancelled','expired','refunded','failed']) assert.match(migration,new RegExp(x));
 });
 test('purchase requires idempotency and authoritative database pricing',()=>{
- assert.match(orderRoute,/Idempotency-Key/); assert.match(orderRoute,/provider_services/); assert.match(orderRoute,/Price is stale/);
- assert.match(rpc,/for update/); assert.match(rpc,/idempotency_conflict/);
+ assert.match(orderRoute,/Idempotency-Key/); assert.match(orderRoute,/resolveOtpOffer/); assert.match(orderRoute,/reserve_market_activation/); assert.match(rpc,/p_price_cents/);
+ assert.match(rpc,/reserve_market_activation/); assert.match(rpc,/for update/);
 });
 test('same provider number cannot have two active marketplace orders',()=>{
  assert.match(fs.readFileSync('supabase/migrations/20260912100000_marketplace_otp_domain.sql','utf8'),/status public\.market_order_status/);
- assert.match(fs.readFileSync('supabase/migrations/20260912101500_marketplace_rpc_phone_guard.sql','utf8'),/provider_id=p_provider_id and phone_number=p_phone_number/);
+ assert.match(fs.readFileSync('supabase/migrations/20260913060000_harden_otp_activation_domain.sql','utf8'),/uq_market_orders_active_provider_phone/);
 });
 test('payment webhook has signature and duplicate-event guard before credit',()=>{
  assert.match(payment,/verifyStripe/); assert.match(payment,/webhook_events/); assert.match(payment,/23505/); assert.match(payment,/credit_wallet_payment/);
@@ -29,6 +29,7 @@ test('expiration worker releases then refunds through idempotent RPC',()=>{
 
 
 const guards=fs.readFileSync('supabase/migrations/20260912103000_marketplace_transaction_guards.sql','utf8');
+const canonical=fs.readFileSync('supabase/migrations/20260913060000_harden_otp_activation_domain.sql','utf8');
 
 test('active provider number reservation is database protected against races',()=>{
   assert.match(guards,/create unique index if not exists uq_market_orders_active_provider_phone/);

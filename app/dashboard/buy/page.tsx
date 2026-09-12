@@ -21,9 +21,9 @@ type Service = {
 type StockRow = {
   providerId: string;
   provider: string;
-  phoneNumber: string;
+  stock: number;
   priceCents: number;
-  stock: boolean;
+  currency: string;
 };
 
 export default function BuyPage() {
@@ -36,6 +36,7 @@ export default function BuyPage() {
   const [stock, setStock] = useState<StockRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
+  const [buying, setBuying] = useState(false);
 
   useEffect(() => {
     void (async () => {
@@ -107,24 +108,20 @@ export default function BuyPage() {
   }, [country, service]);
 
   async function buy(row: StockRow) {
+    if (buying) return;
+    setBuying(true);
     setMessage('Reserving number…');
 
     const key = crypto.randomUUID();
 
     try {
-      const r = await fetch('/api/orders', {
+      const r = await fetch('/api/v1/activations', {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
           'Idempotency-Key': key,
         },
-        body: JSON.stringify({
-          country_id: country,
-          service_id: service,
-          provider_id: row.providerId,
-          phone_number: row.phoneNumber,
-          price_cents: row.priceCents,
-        }),
+        body: JSON.stringify({ country_id: country, service_id: service, provider_id: row.providerId }),
       });
 
       const b = await r.json();
@@ -137,6 +134,8 @@ export default function BuyPage() {
       setMessage(b.error?.message ?? 'Purchase failed');
     } catch {
       setMessage('Purchase failed');
+    } finally {
+      setBuying(false);
     }
   }
 
@@ -198,26 +197,19 @@ export default function BuyPage() {
           stock.map((r) => (
             <div
               className="glass flex flex-wrap items-center justify-between gap-4 rounded-2xl p-5"
-              key={`${r.providerId}-${r.phoneNumber}`}
+              key={`${r.providerId}-${r.priceCents}`}
             >
               <div>
-                <div className="font-bold">{r.phoneNumber}</div>
-                <div className="mt-1 text-sm muted">
-                  {r.provider} · Available now
-                </div>
+                <div className="font-bold">{r.stock.toLocaleString()} numbers available</div>
+                <div className="mt-1 text-sm muted">{r.provider} · Temporary OTP activation</div>
               </div>
 
               <div className="flex items-center gap-3">
                 <div className="text-right font-black">
-                  Rp {(r.priceCents / 100).toLocaleString('id-ID')}
+                  {r.currency} {(r.priceCents / 100).toLocaleString('id-ID')}
                 </div>
 
-                <button
-                  className="btn btn-primary"
-                  onClick={() => buy(r)}
-                >
-                  Buy
-                </button>
+                <button className="btn btn-primary" onClick={() => buy(r)} disabled={buying}>BUY NUMBER</button>
               </div>
             </div>
           ))

@@ -129,6 +129,60 @@ export async function GET(request: Request) {
 
   // Marketplace expiry/release is reconciled in the same serverless worker so
   // the deployment keeps a single Hobby-safe cron entry.
+
+  // Canonical OTP activation reconciliation. Provider polling is server-side;
+  // uncertain provider outcomes are never refunded blindly.
+  let activationProcessed = 0;
+  const { data: activations } = await admin.from('orders')
+    .select('id,provider_id,provider_order_id,status,expires_at,phone_number,country_code,service_code,providers(slug)')
+    .in('status', ['reserving','waiting','sms_received'])
+    .order('created_at', { ascending: true })
+    .limit(BATCH_SIZE);
+  for (const activation of activations ?? []) {
+    const providerRow = activation.providers as unknown as { slug: string } | null;
+    if (!providerRow?.slug || providerRow.slug !== '5sim') continue;
+    try {
+      const { getOtpProvider } = await import('@/services/otp-provider-registry');
+      const provider = getOtpProvider(providerRow.slug);
+      if (!activation.provider_order_id) {
+        if (new Date(activation.expires_at).getTime() <= Date.now()) {
+          await admin.from('orders').update({ status: 'expired', expiration_reason: 'Reservation expired before provider order was confirmed' }).eq('id', activation.id).eq('status','reserving');
+          await admin.rpc('refund_market_order', { p_order_id: activation.id, p_reason: 'Activation reservation expired' });
+          activationProcessed++;
+        }
+        continue;
+      }
+      const status = await provider.getActivationStatus(activation.provider_order_id);
+      const messages = await provider.getSms(activation.provider_order_id);
+      for (const sms of messages) {
+        const { error: messageError } = await admin.from('otp_messages').upsert({
+          order_id: activation.id,
+          provider_id: activation.provider_id,
+          provider_message_id: sms.providerMessageId ?? `poll:${activation.provider_order_id}:${sms.receivedAt}`,
+          sender: sms.sender ?? null,
+          recipient: activation.phone_number,
+          body: sms.body,
+          otp_code: sms.otpCode ?? null,
+          received_at: sms.receivedAt,
+          metadata: { polled: true, raw: sms.raw ?? null },
+        }, { onConflict: 'provider_id,provider_message_id', ignoreDuplicates: true });
+        if (messageError) throw messageError;
+        await admin.rpc('complete_activation', { p_order_id: activation.id, p_event_type: 'sms_received' });
+      }
+      if (status === 'FINISHED') await admin.rpc('complete_activation', { p_order_id: activation.id, p_event_type: 'completed' });
+      if (['TIMEOUT','CANCELED','BANNED','EXPIRED'].includes(status)) {
+        const cancelled = await provider.cancelActivation(activation.provider_order_id).catch(() => ({ success: false }));
+        if (cancelled.success) {
+          await admin.from('orders').update({ status: status === 'TIMEOUT' || status === 'EXPIRED' ? 'expired' : 'cancelled', expiration_reason: status === 'TIMEOUT' ? 'Provider timeout' : null }).eq('id', activation.id).in('status',['waiting','sms_received','reserving']);
+          await admin.rpc('refund_market_order', { p_order_id: activation.id, p_reason: `Provider status ${status}` });
+        }
+      }
+      activationProcessed++;
+    } catch {
+      // Keep the activation in its current state for the next reconciliation pass.
+    }
+  }
+
   let marketplaceExpired = 0;
   const { data: expiredOrders } = await admin.from('orders').select('id,providers(slug),phone_numbers(provider_number_id,country_code)').in('status',['waiting','sms_received']).lt('expires_at',new Date().toISOString()).limit(BATCH_SIZE);
   for (const order of expiredOrders ?? []) {
@@ -155,6 +209,7 @@ export async function GET(request: Request) {
     ok: true,
     processed: results.length,
     marketplace_expired: marketplaceExpired,
+    activation_processed: activationProcessed,
     webhook_processed: webhookProcessed,
     results,
   });
