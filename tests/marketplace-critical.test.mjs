@@ -66,3 +66,28 @@ test('five-minute reconciliation is delegated to an external scheduler on Vercel
   assert.match(workflow,/api\/internal\/reconciliation/);
   assert.match(vercel,/"schedule": "0 0 \* \* \*"/);
 });
+
+test('reserving activation without provider order id is never auto-refunded on expiry',()=>{
+  const src=fs.readFileSync('app/api/internal/reconciliation/route.ts','utf8');
+
+  assert.match(src,/Provider order id missing after reservation/);
+  assert.match(src,/RECONCILIATION_REQUIRED/);
+
+  const missingProviderIdBlock = src.match(
+    /if \(!activation\.provider_order_id\) \{([\s\S]*?)\n\s*continue;\n\s*\}/
+  );
+
+  assert.ok(missingProviderIdBlock, 'missing provider id reconciliation block must exist');
+
+  assert.doesNotMatch(
+    missingProviderIdBlock[1],
+    /refund_market_order/,
+    'ambiguous reserving activation must never be auto-refunded'
+  );
+
+  assert.doesNotMatch(
+    missingProviderIdBlock[1],
+    /status:\s*['"]expired['"]/,
+    'ambiguous reserving activation must not be marked expired'
+  );
+});

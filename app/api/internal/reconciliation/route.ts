@@ -145,11 +145,32 @@ export async function GET(request: Request) {
       const { getOtpProvider } = await import('@/services/otp-provider-registry');
       const provider = getOtpProvider(providerRow.slug);
       if (!activation.provider_order_id) {
+        // A missing provider order id after a network/response-loss failure
+        // is inherently ambiguous. The provider may have created the
+        // activation even though the response never reached us.
+        //
+        // NEVER expire/refund solely from the local TTL in this state.
+        // Retain the funds until the provider outcome is deterministically
+        // reconciled.
         if (new Date(activation.expires_at).getTime() <= Date.now()) {
-          await admin.from('orders').update({ status: 'expired', expiration_reason: 'Reservation expired before provider order was confirmed' }).eq('id', activation.id).eq('status','reserving');
-          await admin.rpc('refund_market_order', { p_order_id: activation.id, p_reason: 'Activation reservation expired' });
+          const reason =
+            'Provider order id missing after reservation; provider outcome is ambiguous';
+
+          const { error: markError } = await admin
+            .from('orders')
+            .update({
+              error_code: 'RECONCILIATION_REQUIRED',
+              error_message: reason,
+              expiration_reason: reason,
+            })
+            .eq('id', activation.id)
+            .eq('status', 'reserving');
+
+          if (markError) throw markError;
+
           activationProcessed++;
         }
+
         continue;
       }
       const status = await provider.getActivationStatus(activation.provider_order_id);
