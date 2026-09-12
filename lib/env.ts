@@ -21,7 +21,7 @@ const serverEnvSchema = publicEnvSchema.extend({
   CRON_SECRET: z.preprocess(blankToUndefined, z.string().min(16).optional()),
   TWILIO_ACCOUNT_SID: z.preprocess(blankToUndefined, z.string().optional()),
   TWILIO_AUTH_TOKEN: z.preprocess(blankToUndefined, z.string().optional()),
-  TWILIO_NUMBER_TYPE: z.preprocess(blankToUndefined, z.enum(['Local','Mobile','TollFree'])).default('Local'),
+  TWILIO_NUMBER_TYPE: z.preprocess((v)=>typeof v==='string' ? ({local:'Local',mobile:'Mobile',tollfree:'TollFree'} as Record<string,string>)[v.trim().toLowerCase()] ?? v : v, z.enum(['Local','Mobile','TollFree'])).default('Local'),
   TELNYX_API_KEY: z.preprocess(blankToUndefined, z.string().optional()),
   TELNYX_PUBLIC_KEY: z.preprocess(blankToUndefined, z.string().optional()),
   TELNYX_MESSAGING_PROFILE_ID: z.preprocess(blankToUndefined, z.string().optional()),
@@ -37,6 +37,11 @@ const serverEnvSchema = publicEnvSchema.extend({
   VONAGE_NUMBER_FEATURES: z.preprocess(blankToUndefined, z.string()).default('SMS'),
   STRIPE_SECRET_KEY: z.preprocess(blankToUndefined, z.string().optional()),
   STRIPE_WEBHOOK_SECRET: z.preprocess(blankToUndefined, z.string().optional()),
+  OTP_ORDER_TTL_SECONDS: z.preprocess(blankToUndefined, z.coerce.number().int().min(60).max(86400)).default(900),
+  PAYMENT_PROVIDER: z.preprocess(blankToUndefined, z.enum(['stripe','xendit','mock'])).default('stripe'),
+  PAYMENT_CURRENCY: z.preprocess(blankToUndefined, z.string().length(3)).default('IDR'),
+  XENDIT_SECRET_KEY: z.preprocess(blankToUndefined, z.string().optional()),
+  XENDIT_CALLBACK_TOKEN: z.preprocess(blankToUndefined, z.string().optional()),
 });
 
 export function publicEnv() {

@@ -127,6 +127,22 @@ export async function GET(request: Request) {
     }
   }
 
+  // Marketplace expiry/release is reconciled in the same serverless worker so
+  // the deployment keeps a single Hobby-safe cron entry.
+  let marketplaceExpired = 0;
+  const { data: expiredOrders } = await admin.from('orders').select('id,providers(slug),phone_numbers(provider_number_id,country_code)').in('status',['waiting','sms_received']).lt('expires_at',new Date().toISOString()).limit(BATCH_SIZE);
+  for (const order of expiredOrders ?? []) {
+    const n = order.phone_numbers as unknown as { provider_number_id: string | null; country_code: string | null } | null;
+    const p = order.providers as unknown as { slug: string } | null;
+    if (n?.provider_number_id && p?.slug) {
+      try { await getProvider(p.slug).releaseNumber(n.provider_number_id,n.country_code ?? undefined); }
+      catch { continue; }
+    }
+    await admin.from('orders').update({status:'expired'}).eq('id',order.id).in('status',['waiting','sms_received']);
+    await admin.rpc('refund_market_order',{p_order_id:order.id,p_reason:'Order expired'});
+    marketplaceExpired++;
+  }
+
   let webhookProcessed = 0;
   try {
     webhookProcessed = await dispatchDueWebhookDeliveries(25);
@@ -138,6 +154,7 @@ export async function GET(request: Request) {
   return NextResponse.json({
     ok: true,
     processed: results.length,
+    marketplace_expired: marketplaceExpired,
     webhook_processed: webhookProcessed,
     results,
   });

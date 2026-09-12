@@ -1,0 +1,6 @@
+import {AppShell} from '@/components/app-shell';
+import {createServerSupabaseClient} from '@/lib/supabase-server';
+import {createAdminClient} from '@/lib/supabase-admin';
+import {OrderActions} from './order-actions';
+import {OrderLive} from './order-live';
+export default async function OrderDetail({params}:{params:Promise<{id:string}>}){const {id}=await params;const s=await createServerSupabaseClient();const {data:{user}}=await s.auth.getUser();if(!user)return <AppShell><div className="glass p-8 rounded-2xl">Login required.</div></AppShell>;const {data:o}=await createAdminClient().from('orders').select('*,countries(code,name,flag),services(name,icon),otp_messages(id,otp_code,body,sender,received_at)').eq('id',id).eq('user_id',user.id).maybeSingle();if(!o)return <AppShell><div className="glass p-8 rounded-2xl">Order not found.</div></AppShell>;return <AppShell><p className="text-sm muted">Order detail</p><h1 className="text-3xl font-black">#{o.id.slice(0,8).toUpperCase()}</h1><div className="glass mt-6 rounded-3xl p-6"><div className="text-sm muted">Live order status / OTP</div><div className="mt-4"><OrderLive orderId={o.id} initialOtp={o.otp_code} initialStatus={o.status}/></div></div><OrderActions orderId={o.id} status={o.status}/></AppShell>}

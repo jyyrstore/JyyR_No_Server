@@ -21,3 +21,4 @@ tsconfig.tsbuildinfo
 # Supabase local temporary files
 supabase/.temp/
 supabase/migrations.backup.*/
+JyyR_No_Server_nested_backup.tar.gz

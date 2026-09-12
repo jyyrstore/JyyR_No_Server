@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase-admin';
 import type { ProviderMessage, NumberProvider } from '@/types/provider';
 import { dispatchWebhookDeliveries } from '@/services/webhook-delivery';
 import { apiError } from '@/lib/api';
+import { processInboundForMarketplace } from '@/services/marketplace';
 
 export async function persistInboundMessage(providerSlug: string, message: ProviderMessage) {
   const admin=createAdminClient();
@@ -24,6 +25,9 @@ export async function handleProviderWebhook(providerSlug:string,request:Request,
     const message=provider.parseInboundWebhook?.(payload,request.headers)??null;
     if(!message)return Response.json({ok:true,ignored:true,request_id:reqId},{status:200,headers:{'x-request-id':reqId}});
     const result=await persistInboundMessage(providerSlug,message);
+    const admin=createAdminClient();
+    const {data:providerRow}=await admin.from('providers').select('id').eq('slug',providerSlug).maybeSingle();
+    if(providerRow) await processInboundForMarketplace({providerSlug,providerId:providerRow.id,from:message.from,to:message.to,body:message.body,providerMessageId:message.providerMessageId,raw:message.raw});
     if(!result.duplicate&&result.id){
       const admin=createAdminClient();
       const {data:event}=await admin.from('message_events').select('id').eq('message_id',result.id).eq('event_type','sms.received').maybeSingle();
