@@ -56,3 +56,13 @@ test('payment webhook retries failed wallet credits instead of marking processed
   assert.match(payment,/\.eq\('source','stripe'\)/);
   assert.match(payment,/\.eq\('event_id',event\.id\)/);
 });
+
+test('five-minute reconciliation is delegated to an external scheduler on Vercel Hobby',()=>{
+  const workflow=fs.readFileSync('.github/workflows/reconciliation.yml','utf8');
+  const vercel=fs.readFileSync('vercel.json','utf8');
+  assert.match(workflow,/cron: '\*\/5 \* \* \* \*'/);
+  assert.match(workflow,/secrets\.CRON_SECRET/);
+  assert.match(workflow,/vars\.APP_BASE_URL/);
+  assert.match(workflow,/api\/internal\/reconciliation/);
+  assert.match(vercel,/"schedule": "0 0 \* \* \*"/);
+});
