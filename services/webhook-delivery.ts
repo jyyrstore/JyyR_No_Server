@@ -216,21 +216,21 @@ async function fetchRowsByIds(ids: string[]): Promise<DeliveryRow[]> {
 }
 
 export async function dispatchWebhookDeliveries(ids: string[]): Promise<number> {
-  const rows = await fetchRowsByIds([...new Set(ids)]);
-  if (!rows.length) return 0;
-
+  if (!ids.length) return 0;
   const admin = createAdminClient();
+  const workerId = `inline-${crypto.randomUUID()}`;
+  const { data, error } = await admin.rpc('claim_webhook_deliveries_by_ids', { p_worker_id: workerId, p_ids: [...new Set(ids)] });
+  if (error) throw new Error(error.message);
+  const rows = (data ?? []) as DeliveryRow[];
   let processed = 0;
   for (const row of rows) {
-    if (!['pending', 'failed'].includes(row.status)) continue;
-    const { data: webhook, error } = await admin
-      .from('webhooks')
-      .select('endpoint_url,secret_ciphertext,retry_policy,status')
-      .eq('id', row.webhook_id)
-      .eq('status', 'active')
-      .maybeSingle();
-    if (error) throw new Error(error.message);
-    if (!webhook) continue;
+    const { data: webhook, error: webhookError } = await admin
+      .from('webhooks').select('endpoint_url,secret_ciphertext,retry_policy,status').eq('id', row.webhook_id).maybeSingle();
+    if (webhookError) throw new Error(webhookError.message);
+    if (!webhook || webhook.status !== 'active') {
+      await admin.from('webhook_deliveries').update({ status: 'failed', response_excerpt: 'Webhook is not active', next_retry_at: null, locked_at: null, locked_by: null }).eq('id', row.id);
+      continue;
+    }
     await deliverRow(row, webhook);
     processed += 1;
   }

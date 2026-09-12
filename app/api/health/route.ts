@@ -1,2 +1,2 @@
-import { NextResponse } from 'next/server';
-export async function GET(){return NextResponse.json({ok:true,service:"Jyy'R Number Server",timestamp:new Date().toISOString()});}
+import { NextResponse } from 'next/server'; import { createAdminClient } from '@/lib/supabase-admin';
+export async function GET(){try{const {error}=await createAdminClient().from('providers').select('id').limit(1);return NextResponse.json({ok:!error,service:"Jyy'R Number Server",database:!error,timestamp:new Date().toISOString()},{status:error?503:200});}catch{return NextResponse.json({ok:false,service:"Jyy'R Number Server",database:false,timestamp:new Date().toISOString()},{status:503})}}

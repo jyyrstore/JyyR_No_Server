@@ -42,7 +42,7 @@ export class VonageProvider implements NumberProvider {
     return `Basic ${Buffer.from(`${VONAGE_API_KEY}:${VONAGE_API_SECRET}`).toString('base64')}`;
   }
 
-  async listNumbers(countryCode: string): Promise<ProviderNumber[]> {
+  async listNumbers(countryCode: string, _options?: { region?: string; areaCode?: string; numberType?: string; sms?: boolean; mms?: boolean; voice?: boolean }): Promise<ProviderNumber[]> {
     const env = this.creds();
     const url = new URL(`${VONAGE_API}/number/search`);
     url.searchParams.set('country', countryCode.toUpperCase());
@@ -99,7 +99,40 @@ export class VonageProvider implements NumberProvider {
     if (!parsed || typeof parsed !== 'object') return false;
     const sig = String((parsed as Record<string, unknown>).sig ?? '');
     if (!sig) return false;
-    return false;
+
+    const params = Object.entries(parsed as Record<string, unknown>)
+      .filter(([key]) => key !== 'sig')
+      .map(([key, value]) => [key, String(value ?? '')] as const)
+      .sort(([a], [b]) => a.localeCompare(b));
+
+    const material = '&' + params
+      .map(([key, value]) => `${key}=${value.replace(/[&=]/g, '_')}`)
+      .join('&');
+
+    const method = env.VONAGE_SIGNATURE_METHOD;
+
+    let expected: string;
+
+    if (method === 'md5hash') {
+      expected = crypto.createHash('md5').update(material + env.VONAGE_SIGNATURE_SECRET).digest('hex');
+    } else if (method === 'md5') {
+      expected = crypto.createHmac('md5', env.VONAGE_SIGNATURE_SECRET).update(material).digest('hex');
+    } else if (method === 'sha1') {
+      expected = crypto.createHmac('sha1', env.VONAGE_SIGNATURE_SECRET).update(material).digest('hex');
+    } else if (method === 'sha256') {
+      expected = crypto.createHmac('sha256', env.VONAGE_SIGNATURE_SECRET).update(material).digest('hex');
+    } else {
+      expected = crypto.createHmac('sha512', env.VONAGE_SIGNATURE_SECRET).update(material).digest('hex');
+    }
+
+    const actual = sig.trim().toLowerCase();
+    const expectedBuffer = Buffer.from(expected, 'utf8');
+    const actualBuffer = Buffer.from(actual, 'utf8');
+
+    return (
+      expectedBuffer.length === actualBuffer.length &&
+      crypto.timingSafeEqual(expectedBuffer, actualBuffer)
+    );
   }
 
   parseInboundWebhook(payload: unknown): ProviderMessage | null {
@@ -114,4 +147,6 @@ export class VonageProvider implements NumberProvider {
     const timestamp = String(p.timestamp ?? p['message-timestamp'] ?? new Date().toISOString());
     return { providerMessageId, from, to, body, receivedAt: timestamp, raw: root };
   }
+  async healthCheck() { const started=Date.now(); await this.listNumbers('US'); return { status: 'active' as const, latencyMs: Date.now()-started }; }
+
 }

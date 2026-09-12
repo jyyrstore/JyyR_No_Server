@@ -23,7 +23,7 @@ export class TelnyxProvider implements NumberProvider {
 
   private headers() { return { Authorization: `Bearer ${this.key()}`, Accept: 'application/json' }; }
 
-  async listNumbers(countryCode: string): Promise<ProviderNumber[]> {
+  async listNumbers(countryCode: string, _options?: { region?: string; areaCode?: string; numberType?: string; sms?: boolean; mms?: boolean; voice?: boolean }): Promise<ProviderNumber[]> {
     const url = new URL(`${TELNYX_API}/available_phone_numbers`);
     url.searchParams.set('filter[country_code]', countryCode.toUpperCase());
     url.searchParams.set('filter[features]', 'sms');
@@ -96,4 +96,6 @@ export class TelnyxProvider implements NumberProvider {
     if (!from || !to || !providerMessageId) return null;
     return { providerMessageId, from, to, body, receivedAt: String(eventData.received_at ?? new Date().toISOString()), raw: root };
   }
+  async healthCheck() { const started=Date.now(); await this.listNumbers('US'); return { status: 'active' as const, latencyMs: Date.now()-started }; }
+
 }

@@ -66,3 +66,40 @@ test('queue migration contains claim locking and duplicate event protection', ()
   assert.match(queueMigration, /message_events_message_event_type_key/);
   assert.match(queueMigration, /SKIP LOCKED/);
 });
+
+test('top-up flow verifies Stripe callback and credits only through trusted RPC', () => {
+  const route = read('app/api/webhooks/stripe/route.ts');
+  const topup = read('app/api/billing/topup/route.ts');
+  assert.match(route, /stripe-signature/);
+  assert.match(route, /credit_topup_transaction/);
+  assert.match(topup, /STRIPE_SECRET_KEY/);
+  assert.match(topup, /Idempotency-Key/);
+});
+
+test('inbound dispatch claims deliveries atomically', () => {
+  const inbound = read('services/inbound-webhook.ts');
+  const worker = read('services/webhook-delivery.ts');
+  assert.match(inbound, /dispatchWebhookDeliveries/);
+  assert.match(worker, /claim_webhook_deliveries_by_ids/);
+});
+
+test('admin authorization is server-side', () => {
+  const admin = read('services/admin.ts');
+  assert.match(admin, /profiles/);
+  assert.match(admin, /role/);
+  assert.match(admin, /admin/);
+});
+
+for (const file of ['lib/env.ts','app/api/billing/topup/route.ts','app/api/webhooks/stripe/route.ts']) {
+  test(`${file} does not expose server secrets through NEXT_PUBLIC`, () => {
+    assert.doesNotMatch(read(file), /NEXT_PUBLIC_[A-Z_]*(SECRET|TOKEN)/i);
+    assert.doesNotMatch(read(file), /NEXT_PUBLIC_SERVICE_ROLE|NEXT_PUBLIC_PROVIDER|NEXT_PUBLIC_STRIPE/i);
+  });
+}
+
+
+test('Vercel cron configuration is Hobby-safe and does not claim exact retry cadence', () => {
+  const v = JSON.parse(read('vercel.json'));
+  assert.equal(v.crons.length, 1);
+  assert.equal(v.crons[0].schedule, '0 0 * * *');
+});

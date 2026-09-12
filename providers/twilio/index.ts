@@ -6,6 +6,7 @@ import { providerFetch, providerWebhookUrl, requireConfig, normalizeE164 } from 
 const TWILIO_API = 'https://api.twilio.com/2010-04-01';
 
 type TwilioListResponse = { available_phone_numbers?: Array<Record<string, unknown>> };
+type TwilioPricingResponse = { phone_number_prices?: Array<{ base_price?: string; current_price?: string; number_type?: string }> };
 type TwilioIncomingResponse = { sid: string; phone_number?: string };
 type TwilioMessageResponse = { sid: string };
 
@@ -24,16 +25,23 @@ export class TwilioProvider implements NumberProvider {
     return `Basic ${Buffer.from(`${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}`).toString('base64')}`;
   }
 
-  async listNumbers(countryCode: string): Promise<ProviderNumber[]> {
+  async listNumbers(countryCode: string, options?: { region?: string; areaCode?: string; numberType?: string; sms?: boolean; mms?: boolean; voice?: boolean }): Promise<ProviderNumber[]> {
     const env = this.config();
     const type = env.TWILIO_NUMBER_TYPE;
     const url = new URL(`${TWILIO_API}/Accounts/${env.TWILIO_ACCOUNT_SID}/AvailablePhoneNumbers/${encodeURIComponent(countryCode.toUpperCase())}/${type}.json`);
     url.searchParams.set('PageSize', '20');
-    url.searchParams.set('SmsEnabled', 'true');
-    url.searchParams.set('VoiceEnabled', 'true');
+    url.searchParams.set('SmsEnabled', String(options?.sms ?? true));
+    url.searchParams.set('MmsEnabled', String(options?.mms ?? false));
+    url.searchParams.set('VoiceEnabled', String(options?.voice ?? true));
+    if (options?.region) url.searchParams.set('InRegion', options.region);
+    if (options?.areaCode) url.searchParams.set('AreaCode', options.areaCode);
     const response = await fetch(url, { headers: { Authorization: this.authHeader(), Accept: 'application/json' }, cache: 'no-store' });
     if (!response.ok) throw new Error(`Twilio API ${response.status}: ${(await response.text()).slice(0, 500)}`);
     const body = await response.json() as TwilioListResponse;
+    const pricingUrl = new URL(`${TWILIO_API}/Accounts/${env.TWILIO_ACCOUNT_SID}/AvailablePhoneNumberPrices/${encodeURIComponent(countryCode.toUpperCase())}/${type}.json`);
+    const pricingResponse = await fetch(pricingUrl, { headers: { Authorization: this.authHeader(), Accept: 'application/json' }, cache: 'no-store' });
+    const pricing = pricingResponse.ok ? await pricingResponse.json() as TwilioPricingResponse : null;
+    const price = Number(pricing?.phone_number_prices?.[0]?.current_price ?? pricing?.phone_number_prices?.[0]?.base_price ?? 0);
     return (body.available_phone_numbers ?? []).map((n) => ({
       providerId: 'twilio',
       phoneNumber: String(n.phone_number ?? ''),
@@ -43,7 +51,7 @@ export class TwilioProvider implements NumberProvider {
         n.mms_enabled ? 'mms' : null,
         n.voice_enabled ? 'voice' : null,
       ].filter(Boolean) as Array<'sms' | 'mms' | 'voice'>,
-      monthlyPrice: 0,
+      monthlyPrice: price,
       numberType: type,
       metadata: n,
     })).filter((n) => n.phoneNumber);
@@ -111,4 +119,6 @@ export class TwilioProvider implements NumberProvider {
     if (!from || !to || !providerMessageId) return null;
     return { providerMessageId, from, to, body, receivedAt: new Date().toISOString(), raw: payload };
   }
+  async healthCheck() { const started=Date.now(); await this.listNumbers('US'); return { status: 'active' as const, latencyMs: Date.now()-started }; }
+
 }

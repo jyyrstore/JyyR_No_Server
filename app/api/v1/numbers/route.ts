@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { authenticateApiKey, hasApiKeyPermission } from '@/services/api-key-auth';
+import { authenticateRequest } from '@/services/request-auth';
 import { createAdminClient } from '@/lib/supabase-admin';
 import { getProvider } from '@/services/provider-registry';
 
@@ -18,16 +18,13 @@ function getIdempotencyKey(request: Request): string | null {
 }
 
 export async function GET(request: Request) {
-  const a = await authenticateApiKey(request);
+  const a = await authenticateRequest(request, 'numbers:read');
   if (!a.ok) return NextResponse.json({ error: a.error }, { status: a.status });
-  if (!hasApiKeyPermission(a.apiKey, 'numbers:read')) {
-    return NextResponse.json({ error: 'Insufficient API key permission' }, { status: 403 });
-  }
 
   const { data, error } = await createAdminClient()
     .from('phone_numbers')
     .select('*')
-    .eq('user_id', a.apiKey.userId)
+    .eq('user_id', a.userId)
     .order('created_at', { ascending: false });
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
@@ -35,12 +32,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-  const a = await authenticateApiKey(request);
+  const a = await authenticateRequest(request, 'numbers:write');
   if (!a.ok) return NextResponse.json({ error: a.error }, { status: a.status });
-
-  if (!hasApiKeyPermission(a.apiKey, 'numbers:write')) {
-    return NextResponse.json({ error: 'Insufficient API key permission' }, { status: 403 });
-  }
 
   const idempotencyKey = getIdempotencyKey(request);
   if (!idempotencyKey) {
@@ -125,7 +118,7 @@ export async function POST(request: Request) {
     const { data: reserveData, error: reserveError } = await admin.rpc(
       'reserve_number_order',
       {
-        p_user_id: a.apiKey.userId,
+        p_user_id: a.userId,
         p_provider_id: providerRow.id,
         p_idempotency_key: idempotencyKey,
         p_phone_number: phoneNumber,
@@ -195,7 +188,7 @@ export async function POST(request: Request) {
         const { data: existingNumber } = await admin
           .from('phone_numbers')
           .select('*')
-          .eq('user_id', a.apiKey.userId)
+          .eq('user_id', a.userId)
           .eq('provider_number_id', existingOrder.provider_number_id)
           .maybeSingle();
 
@@ -240,7 +233,7 @@ export async function POST(request: Request) {
     // Provider purchase happens only after the balance reservation succeeds.
     const provisioned = await providerClient.provisionNumber(
       phoneNumber,
-      a.apiKey.userId,
+      a.userId,
       countryCode,
     );
 
@@ -285,7 +278,7 @@ export async function POST(request: Request) {
     const { data: number, error: numberError } = await admin
       .from('phone_numbers')
       .insert({
-        user_id: a.apiKey.userId,
+        user_id: a.userId,
         provider_id: providerRow.id,
         phone_number: phoneNumber,
         country_code: countryCode,

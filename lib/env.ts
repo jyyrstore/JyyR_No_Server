@@ -14,16 +14,14 @@ const publicEnvSchema = z.object({
 const serverEnvSchema = publicEnvSchema.extend({
   SUPABASE_SERVICE_ROLE_KEY: z.preprocess(blankToUndefined, z.string().min(10).optional()),
   DATABASE_URL: z.preprocess(blankToUndefined, z.string().url().optional()),
-  DEMO_MODE: z.coerce.boolean().default(false),
-  API_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().positive().default(60),
+  DEMO_MODE: z.preprocess(blankToUndefined, z.coerce.boolean()).default(false),
+  API_RATE_LIMIT_PER_MINUTE: z.preprocess(blankToUndefined, z.coerce.number().int().positive()).default(100),
   WEBHOOK_ENCRYPTION_KEY: z.preprocess(blankToUndefined, z.string().min(16).optional()),
-  APP_BASE_URL: z.string().url().default('http://localhost:3000'),
+  APP_BASE_URL: z.preprocess(blankToUndefined, z.string().url()).default('http://localhost:3000'),
+  CRON_SECRET: z.preprocess(blankToUndefined, z.string().min(16).optional()),
   TWILIO_ACCOUNT_SID: z.preprocess(blankToUndefined, z.string().optional()),
   TWILIO_AUTH_TOKEN: z.preprocess(blankToUndefined, z.string().optional()),
-  TWILIO_NUMBER_TYPE: z.preprocess(
-    blankToUndefined,
-    z.enum(['Local', 'Mobile', 'TollFree']).optional(),
-  ).default('Local'),
+  TWILIO_NUMBER_TYPE: z.preprocess(blankToUndefined, z.enum(['Local','Mobile','TollFree'])).default('Local'),
   TELNYX_API_KEY: z.preprocess(blankToUndefined, z.string().optional()),
   TELNYX_PUBLIC_KEY: z.preprocess(blankToUndefined, z.string().optional()),
   TELNYX_MESSAGING_PROFILE_ID: z.preprocess(blankToUndefined, z.string().optional()),
@@ -31,14 +29,14 @@ const serverEnvSchema = publicEnvSchema.extend({
   VONAGE_API_KEY: z.preprocess(blankToUndefined, z.string().optional()),
   VONAGE_API_SECRET: z.preprocess(blankToUndefined, z.string().optional()),
   VONAGE_SIGNATURE_SECRET: z.preprocess(blankToUndefined, z.string().optional()),
-  VONAGE_NUMBER_TYPE: z.preprocess(
+  VONAGE_SIGNATURE_METHOD: z.preprocess(
     blankToUndefined,
-    z.enum(['landline', 'mobile-lvn', 'landline-toll-free']).optional(),
-  ).default('mobile-lvn'),
-  VONAGE_NUMBER_FEATURES: z.preprocess(
-    blankToUndefined,
-    z.string().default('SMS'),
+    z.enum(['md5', 'md5hash', 'sha1', 'sha256', 'sha512']).default('md5hash'),
   ),
+  VONAGE_NUMBER_TYPE: z.preprocess(blankToUndefined, z.enum(['landline','mobile-lvn','landline-toll-free'])).default('mobile-lvn'),
+  VONAGE_NUMBER_FEATURES: z.preprocess(blankToUndefined, z.string()).default('SMS'),
+  STRIPE_SECRET_KEY: z.preprocess(blankToUndefined, z.string().optional()),
+  STRIPE_WEBHOOK_SECRET: z.preprocess(blankToUndefined, z.string().optional()),
 });
 
 export function publicEnv() {
@@ -50,25 +48,6 @@ export function publicEnv() {
 
 export function serverEnv() {
   return serverEnvSchema.parse({
-    NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
-    NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-    SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
-    DATABASE_URL: process.env.DATABASE_URL,
-    DEMO_MODE: process.env.DEMO_MODE,
-    API_RATE_LIMIT_PER_MINUTE: process.env.API_RATE_LIMIT_PER_MINUTE,
-    WEBHOOK_ENCRYPTION_KEY: process.env.WEBHOOK_ENCRYPTION_KEY,
-    APP_BASE_URL: process.env.APP_BASE_URL,
-    TWILIO_ACCOUNT_SID: process.env.TWILIO_ACCOUNT_SID,
-    TWILIO_AUTH_TOKEN: process.env.TWILIO_AUTH_TOKEN,
-    TWILIO_NUMBER_TYPE: process.env.TWILIO_NUMBER_TYPE,
-    TELNYX_API_KEY: process.env.TELNYX_API_KEY,
-    TELNYX_PUBLIC_KEY: process.env.TELNYX_PUBLIC_KEY,
-    TELNYX_MESSAGING_PROFILE_ID: process.env.TELNYX_MESSAGING_PROFILE_ID,
-    TELNYX_CONNECTION_ID: process.env.TELNYX_CONNECTION_ID,
-    VONAGE_API_KEY: process.env.VONAGE_API_KEY,
-    VONAGE_API_SECRET: process.env.VONAGE_API_SECRET,
-    VONAGE_SIGNATURE_SECRET: process.env.VONAGE_SIGNATURE_SECRET,
-    VONAGE_NUMBER_TYPE: process.env.VONAGE_NUMBER_TYPE,
-    VONAGE_NUMBER_FEATURES: process.env.VONAGE_NUMBER_FEATURES,
+    ...process.env,
   });
 }
