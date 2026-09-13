@@ -79,6 +79,10 @@ export async function POST(request:Request){
     );
   }
 
+  if(!eventRow){
+    return Response.json({success:false,error:{code:'PROVIDER_ERROR',message:'Webhook state unavailable'}},{status:500});
+  }
+
   if(eventRow.status==='processed'){
     return Response.json({success:true,data:{duplicate:true}});
   }

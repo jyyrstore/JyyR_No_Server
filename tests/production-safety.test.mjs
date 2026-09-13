@@ -68,12 +68,12 @@ test('queue migration contains claim locking and duplicate event protection', ()
 });
 
 test('top-up flow verifies Stripe callback and credits only through trusted RPC', () => {
-  const route = read('app/api/webhooks/stripe/route.ts');
-  const topup = read('app/api/billing/topup/route.ts');
+  const route = read('app/api/webhooks/payment/route.ts');
+  const topup = read('app/api/wallet/deposit/route.ts');
   assert.match(route, /stripe-signature/);
-  assert.match(route, /credit_topup_transaction/);
+  assert.match(route, /credit_wallet_payment/);
   assert.match(topup, /STRIPE_SECRET_KEY/);
-  assert.match(topup, /Idempotency-Key/);
+  assert.match(topup, /idempotency_key/);
 });
 
 test('inbound dispatch claims deliveries atomically', () => {
@@ -98,8 +98,10 @@ for (const file of ['lib/env.ts','app/api/billing/topup/route.ts','app/api/webho
 }
 
 
-test('Vercel cron configuration is Hobby-safe and does not claim exact retry cadence', () => {
-  const v = JSON.parse(read('vercel.json'));
-  assert.equal(v.crons.length, 1);
-  assert.equal(v.crons[0].schedule, '0 0 * * *');
+test('Vercel cron configuration does not duplicate reconciliation scheduling', () => {
+  const vercel = read('vercel.json')
+  const cronEntries = (vercel.match(/"schedule":/g) || []).length
+
+  assert.equal(cronEntries, 0)
+  assert.deepEqual(JSON.parse(vercel), { crons: [] })
 });

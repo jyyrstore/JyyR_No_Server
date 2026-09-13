@@ -1,34 +1,33 @@
-# Jyy'R Virtual Number Marketplace
+# Jyy'R No Server — OTP Activation Marketplace
 
-Jyy'R No Server is an existing Next.js + Supabase foundation evolved into a **virtual/temporary phone-number marketplace for legitimate SMS/OTP workflows**.
+Existing Next.js + Supabase application evolved into a **one-time OTP activation marketplace**. The project was not rebuilt from zero and the existing authentication, wallet, webhook, provider, admin, and compatibility infrastructure remains in place where useful.
 
 ## Product flow
 
-Register/Login → Deposit balance → Country → Service → Price/Stock → Buy → Waiting for SMS → OTP → Copy → Cancel/Expire → History.
+Register/Login → Wallet → Country → Service → Current stock/price → BUY NUMBER → temporary number → WAITING SMS → OTP → SMS_RECEIVED → COMPLETED → history/refund/expiration.
 
-The old number/API infrastructure remains available where compatibility matters; the marketplace uses its own `countries`, `services`, `provider_*`, `orders`, `otp_messages`, `payments`, `wallets`, and `wallet_transactions` domain.
+## Canonical architecture
 
-## Architecture
+- Next.js 16 App Router / TypeScript
+- Supabase Auth + PostgreSQL + RLS + Realtime
+- Server-only provider adapters
+- Server-authoritative pricing/stock
+- PostgreSQL row-locked wallet debit/refund
+- Idempotent activation purchase/cancellation/refund/payment webhook
+- `orders` as the canonical activation record
+- `activation_events` for immutable lifecycle history
+- `otp_messages` for inbound SMS
+- `wallet_transactions` as the OTP financial ledger
 
-Next.js App Router → server API/services → Supabase/PostgreSQL + provider adapters.
+See `ARCHITECTURE.md` for the full dependency flow and `OTP_ACTIVATION_AUDIT.md` for the audit classification.
 
-Financial effects are performed by server-only RPCs with row locking and idempotency. Provider-specific code stays inside adapters. Provider webhook messages are validated, persisted, matched to an active order, and converted into OTP events.
+## OTP provider boundary
 
-## Development
+The new OTP-specific contract is in `types/otp-provider.ts`, resolved through `services/otp-provider-registry.ts`.
 
-Requirements: Node.js 22+, npm, Supabase project.
+The initial production adapter is **5SIM** because its API is activation/order oriented. Twilio, Telnyx, and Vonage adapters remain in the existing repository for legacy number provisioning compatibility; they are **not** treated as equivalent temporary OTP activation providers.
 
-```bash
-cp .env.example .env.local
-npm install
-npm run test
-npm run typecheck
-npm run lint
-npm run build
-npm run dev
-```
-
-If the checkout environment has no installed dependencies, install may require normal network access. The supplied source archive itself does not contain a complete `node_modules` tree.
+Production 5SIM remains disabled in the database until real provider credentials and account readiness are configured and verified.
 
 ## Environment
 
@@ -36,111 +35,116 @@ Public:
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 
-Server only:
+Server-only:
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `CRON_SECRET`
 - `APP_BASE_URL`
-- provider credentials (`TWILIO_*`, `TELNYX_*`, `VONAGE_*`)
-- Stripe credentials (`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`)
-- `WEBHOOK_ENCRYPTION_KEY`
+- `FIVESIM_API_KEY`
+- `FIVESIM_CURRENCY`
+- `OTP_PROVIDER_FX_RATE` when provider/customer currencies differ
+- payment/provider secrets used by existing integrations
 
-Marketplace:
-- `OTP_ORDER_TTL_SECONDS`
-- `PAYMENT_PROVIDER` = `stripe`, `mock`, or supported implementation
-- `PAYMENT_CURRENCY` (default `IDR`)
-- `DEMO_MODE`
+Never expose server credentials through `NEXT_PUBLIC_*`.
 
-Never prefix a secret with `NEXT_PUBLIC_`.
+## Development
 
-## Supabase
+Requirements: Node.js 22+ and npm.
 
-The existing production schema is preserved. Marketplace migrations are incremental:
+```bash
+npm ci
+npm test
+npm run typecheck
+npm run lint
+npm run build
+npm run dev
+```
 
-- `20260912100000_marketplace_otp_domain.sql`
-- `20260912101500_marketplace_rpc_phone_guard.sql`
-- `20260912102000_marketplace_realtime_orders.sql`
-- `marketplace_webhook_rls_hardening_20260912`
-- `marketplace_order_concurrency_indexes_20260912`
+The supplied archive did not contain a complete `node_modules` installation, and this execution environment could not download all npm packages. Therefore typecheck/lint/build are **not claimed verified** from this archive.
 
-The live project was checked after migration. Existing production data is not dropped.
+## Database
 
-## Providers
+New forward migrations:
 
-Existing Twilio, Telnyx, Vonage, and custom adapters are preserved. A development-only `mock` adapter provides deterministic test stock.
+- `20260913055900_add_reserving_activation_status.sql`
+- `20260913060000_harden_otp_activation_domain.sql`
 
-Production OTP acquisition requires real provider credentials, provider-side SMS capability, and webhook configuration. The mock adapter is not evidence of live provider readiness.
+The production Supabase project was directly verified after applying the schema changes. No production tables were dropped.
 
-## Payments
+Canonical activation states:
 
-The marketplace payment model is:
-create payment → gateway checkout → signed webhook → duplicate-event guard → server RPC → wallet ledger.
+`PENDING → RESERVING → WAITING_SMS → SMS_RECEIVED → COMPLETED`
 
-Stripe is implemented. A `mock` payment mode is available for development. Live payment processing requires valid gateway credentials and webhook configuration.
+Terminal/exception states:
+
+`FAILED`, `CANCELLED`, `EXPIRED`, `REFUNDED`.
 
 ## API
 
-Marketplace endpoints:
+Canonical activation API:
 
-- `GET /api/countries`
-- `GET /api/services`
-- `GET /api/stock?country_id=...&service_id=...`
-- `POST /api/orders`
-- `GET /api/orders`
-- `GET /api/orders/:id`
-- `POST /api/orders/:id` (cancel)
-- `GET /api/wallet`
-- `POST /api/wallet/deposit`
-- `POST /api/webhooks/payment`
-- provider webhooks remain at `/api/webhooks/twilio`, `/api/webhooks/telnyx`, `/api/webhooks/vonage`
+- `GET /api/v1/activations`
+- `POST /api/v1/activations` — requires `Idempotency-Key`
+- `GET /api/v1/activations/:id`
+- `POST /api/v1/activations/:id` with `{ "action": "cancel" }`
+- `GET /api/v1/activations/:id/messages`
 
-Errors use `{ success:false, error:{code,message} }` on new marketplace APIs.
+Compatibility aliases remain:
 
-## Order lifecycle
+- `/api/orders`
+- `/api/orders/:id`
+- `/api/billing/topup`
+- `/api/webhooks/stripe`
 
-`pending → waiting → sms_received → completed`
+The aliases contain no duplicate business logic.
 
-Terminal alternatives: `cancelled`, `expired`, `refunded`, `failed`.
+## Wallet safety
 
-The browser never owns order status. Server/provider events do.
+Purchase sequence:
 
-## Wallet invariants
+1. authenticate
+2. resolve live offer
+3. atomically debit wallet + create `RESERVING` activation
+4. acquire upstream activation
+5. finalize provider order/number
+6. wait for SMS
 
-Every purchase creates one ledger entry. Every refund is keyed by `refund:<order-id>`. Every payment credit is keyed by `payment:<payment-id>`. User wallet rows are locked during financial operations.
+Definitive provider failure refunds through the existing idempotent refund RPC. Network/timeout outcomes are marked for reconciliation instead of being blindly refunded.
 
-## Realtime
+Historical prices are snapshotted as provider cost, markup, sale price, and currency.
 
-Order detail subscribes to Supabase Realtime `orders` updates and also has a conservative polling fallback.
+## Background reconciliation
 
-## Expiration
+`/api/internal/reconciliation` is CRON-secret protected and handles:
 
-Vercel Hobby-safe deployment keeps one cron endpoint: `/api/internal/reconciliation`. It handles existing reconciliation, marketplace expiration/release/refund, and webhook delivery retries.
+- legacy number-order reconciliation
+- OTP provider polling
+- SMS persistence
+- activation completion
+- expiration/release/refund
+- webhook delivery retries
 
-## Admin
+**Important:** the connected Vercel project is on Hobby. Its current cron schedule is daily, which is not sufficient for a 15-minute OTP expiration SLA. A production deployment needs a more frequent scheduler/worker before claiming real-time expiration guarantees.
 
-Existing server-side admin authorization and admin infrastructure are preserved. Marketplace catalog tables are ready for country/service/provider/pricing management; admin UI expansion should be enabled only against the final production catalog policy.
+## Security
+
+- Customer ownership is checked server-side.
+- Financial/lifecycle mutations are server-only.
+- Supabase RLS is enabled on wallet, order, message, payment, webhook, and activation-event tables.
+- Provider credentials stay server-side.
+- Payment webhooks use signature verification and duplicate-event tracking.
+- OTP provider outcomes are reconciled server-side.
+- No CAPTCHA bypass, anti-fraud bypass, spam tooling, or verification-evasion functionality is implemented.
 
 ## Testing
 
-```bash
-npm test
-```
+`npm test` currently passes **23/23** source-level production-safety/marketplace tests.
 
-Critical source-level tests cover idempotency, authoritative pricing, active-number uniqueness, signed payment webhook/replay protection, and expiration/refund wiring.
+A full live E2E test still requires:
 
-A complete live E2E test additionally requires real provider/payment credentials. Do not treat mock success as production verification.
+- real OTP provider credentials and funded provider account
+- enabled provider country/service mappings
+- live payment credentials/webhook
+- networked dependency installation
+- a real test customer/account
 
-## Production checklist
-
-- [ ] Configure real OTP provider credentials.
-- [ ] Configure provider SMS webhook URLs and signatures.
-- [ ] Configure live payment gateway + signed webhook.
-- [ ] Verify Supabase Auth email/redirect settings.
-- [ ] Enable leaked-password protection in Supabase Auth.
-- [ ] Review Supabase security/performance advisors.
-- [ ] Run lint, typecheck, test, and build in a networked CI environment.
-- [ ] Perform a real deposit → purchase → SMS → cancel/expire E2E test.
-- [ ] Monitor provider failures, reconciliation, refunds, and webhook queues.
-
-## Safety
-
-This project is intended for legitimate communications and verification workflows. It does not implement CAPTCHA/OTP bypassing, fraud-control bypasses, credential abuse, or evasion of platform security controls.
+Do not interpret the mock/legacy provider code as live OTP readiness.

@@ -1,0 +1,83 @@
+name: Supabase migration history repair
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type REPAIR_HISTORY to authorize one-time history repair'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  repair:
+    if: ${{ inputs.confirm == 'REPAIR_HISTORY' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Validate required secrets
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          test -n "${SUPABASE_ACCESS_TOKEN}"
+          test -n "${SUPABASE_DB_PASSWORD}"
+          test -n "${SUPABASE_PROJECT_ID}"
+
+      - name: Link project
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          supabase link             --project-ref "${SUPABASE_PROJECT_ID}"             --password "${SUPABASE_DB_PASSWORD}"
+
+      - name: Verify migration file exists
+        run: |
+          set -euo pipefail
+          test -f "supabase/migrations/20260913080001_harden_profiles_authoritative_fields.sql"
+          git diff --check
+
+      - name: Show migration state before repair
+        run: |
+          set -euo pipefail
+          supabase migration list
+
+      - name: Repair remote migration history
+        run: |
+          set -euo pipefail
+
+          # These remote entries were historically applied/repaired outside
+          # the repository migration source-of-truth.
+          supabase migration repair --status reverted 20260913022304
+          supabase migration repair --status reverted 20260913022345
+          supabase migration repair --status reverted 20260913022838
+
+          # These repository migrations are already present in production.
+          # Repair only restores metadata/source-of-truth alignment.
+          supabase migration repair --status applied 20260913070000
+          supabase migration repair --status applied 20260913080000
+
+      - name: Show migration state after repair
+        run: |
+          set -euo pipefail
+          supabase migration list
+
+      - name: Verify dry-run after metadata repair
+        run: |
+          set -euo pipefail
+          supabase db push --dry-run

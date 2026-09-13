@@ -29,10 +29,7 @@ export function OrderLive({
           filter: `id=eq.${orderId}`,
         },
         (payload) => {
-          const row = payload.new as {
-            otp_code?: string | null;
-            status?: string;
-          };
+          const row = payload.new as { otp_code?: string | null; status?: string };
 
           setOtp(row.otp_code ?? null);
 
@@ -45,7 +42,7 @@ export function OrderLive({
 
     const timer = setInterval(async () => {
       try {
-        const r = await fetch(`/api/orders/${orderId}`, {
+        const r = await fetch(`/api/v1/activations/${orderId}`, {
           cache: 'no-store',
         });
 

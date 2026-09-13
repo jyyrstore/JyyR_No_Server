@@ -17,6 +17,6 @@ export async function authenticateApiKey(request:Request){
   const {data:p,error:pe}=await admin.from('api_key_permissions').select('permission').eq('api_key_id',k.id);
   if(pe)return{ok:false as const,status:500,error:'Unable to verify API key permissions',code:'INTERNAL_ERROR'};
   await admin.from('api_keys').update({last_used_at:new Date().toISOString()}).eq('id',k.id);
-  return{ok:true as const,apiKey:{id:k.id,userId:k.user_id,permissions:new Set((p??[]).map((x:{permission:string})=>x.permission as ApiKeyPermission))}};
+  return{ok:true as const,apiKey:{id:k.id,userId:k.user_id,permissions:new Set<ApiKeyPermission>((p??[]).map((x:{permission:string})=>x.permission as ApiKeyPermission))}};
 }
 export function hasApiKeyPermission(k:{permissions:Set<ApiKeyPermission>},p:ApiKeyPermission){return k.permissions.has(p)}

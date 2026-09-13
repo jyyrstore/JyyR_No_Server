@@ -19,12 +19,12 @@ export function OrderActions({
     setBusy(true);
 
     try {
-      const r = await fetch(`/api/orders/${orderId}`, {
+      const r = await fetch(`/api/v1/activations/${orderId}`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
         },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ action: 'cancel' }),
       });
 
       const b = await r.json();
