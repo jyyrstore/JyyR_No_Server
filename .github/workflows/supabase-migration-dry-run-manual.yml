@@ -42,5 +42,12 @@ jobs:
             --project-ref "${SUPABASE_PROJECT_ID}" \
             --password "${SUPABASE_DB_PASSWORD}"
 
+      - name: Show migration state
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          supabase migration list
+
       - name: Parser test
         run: echo "dry-run workflow parser OK"
