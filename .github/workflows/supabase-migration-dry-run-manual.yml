@@ -9,7 +9,16 @@ permissions:
 jobs:
   dry-run:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
       - name: Parser test
         run: echo "dry-run workflow parser OK"
