@@ -1,0 +1,14 @@
+name: Workflow dispatch diagnostic
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test
+        run: echo "workflow dispatch parser OK"
