@@ -2,7 +2,7 @@
 name: Supabase migration dry-run
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: {}
 
 permissions:
   contents: read
