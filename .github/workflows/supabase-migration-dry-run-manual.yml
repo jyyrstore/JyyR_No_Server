@@ -31,5 +31,16 @@ jobs:
           test -n "${SUPABASE_DB_PASSWORD}"
           test -n "${SUPABASE_PROJECT_ID}"
 
+      - name: Link project
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          supabase link \
+            --project-ref "${SUPABASE_PROJECT_ID}" \
+            --password "${SUPABASE_DB_PASSWORD}"
+
       - name: Parser test
         run: echo "dry-run workflow parser OK"
