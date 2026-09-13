@@ -49,5 +49,14 @@ jobs:
           set -euo pipefail
           supabase migration list
 
+      - name: Verify expected pending migration
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          output="$(supabase migration list)"
+          printf '%s\n' "$output"
+          grep -F '`20260913080001` | ` ` |' <<< "$output"
+
       - name: Parser test
         run: echo "dry-run workflow parser OK"
