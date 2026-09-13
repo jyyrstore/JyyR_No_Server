@@ -1,3 +1,4 @@
+# Force GitHub Actions workflow re-index
 name: Supabase migration dry-run
 
 on:
