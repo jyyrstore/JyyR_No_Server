@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -57,37 +58,218 @@ test('payment webhook retries failed wallet credits instead of marking processed
   assert.match(payment,/\.eq\('event_id',event\.id\)/);
 });
 
-test('five-minute reconciliation is delegated to an external scheduler on Vercel Hobby',()=>{
-  const workflow=fs.readFileSync('.github/workflows/reconciliation.yml','utf8');
-  const vercel=fs.readFileSync('vercel.json','utf8');
-  assert.match(workflow,/cron: '\*\/5 \* \* \* \*'/);
-  assert.match(workflow,/secrets\.CRON_SECRET/);
-  assert.match(workflow,/vars\.APP_BASE_URL/);
-  assert.match(workflow,/api\/internal\/reconciliation/);
-  assert.match(vercel,/"schedule": "0 0 \* \* \*"/);
+test('reconciliation is delegated to GitHub Actions, not Vercel Cron', () => {
+  const vercel = readFileSync('vercel.json', 'utf8')
+  const workflow = readFileSync('.github/workflows/reconciliation.yml', 'utf8')
+
+  assert.deepEqual(JSON.parse(vercel), { crons: [] })
+  assert.match(workflow, /schedule:/)
+  assert.match(workflow, /cron:/)
+  assert.match(workflow, /CRON_SECRET/)
 });
 
-test('reserving activation without provider order id is never auto-refunded on expiry',()=>{
+test('reserving activation without provider order id is never blindly auto-refunded on expiry',()=>{
   const src=fs.readFileSync('app/api/internal/reconciliation/route.ts','utf8');
 
-  assert.match(src,/Provider order id missing after reservation/);
+  assert.match(src,/findRecentActivations/);
   assert.match(src,/RECONCILIATION_REQUIRED/);
+  assert.match(src,/No deterministic 5SIM activation match found/);
+  assert.match(src,/Multiple possible 5SIM activations matched reservation/);
+});
 
-  const missingProviderIdBlock = src.match(
-    /if \(!activation\.provider_order_id\) \{([\s\S]*?)\n\s*continue;\n\s*\}/
+test('provider attempt timestamp is captured before external OTP purchase',()=>{
+  const src=fs.readFileSync('app/api/v1/activations/route.ts','utf8');
+
+  assert.match(src,/provider_attempt_at: new Date\(\)\.toISOString\(\)/);
+  assert.match(src,/\.eq\('status', 'reserving'\)/);
+});
+
+test('5SIM provider exposes activation history recovery',()=>{
+  const provider=fs.readFileSync('types/otp-provider.ts','utf8');
+  const adapter=fs.readFileSync('providers/5sim/index.ts','utf8');
+
+  assert.match(provider,/OtpProviderActivationCandidate/);
+  assert.match(provider,/findRecentActivations/);
+  assert.match(adapter,/\/user\/orders\?category=activation/);
+  assert.match(adapter,/5sim_order_history/);
+});
+
+test('response-loss recovery requires exact-one provider match',()=>{
+  const src=fs.readFileSync('app/api/internal/reconciliation/route.ts','utf8');
+
+  assert.match(src,/findRecentActivations/);
+  assert.match(src,/matching\.length === 1/);
+  assert.match(src,/candidate\.priceCents/);
+  assert.match(src,/provider_cost_cents/);
+  assert.match(src,/Math\.abs\(/);
+  assert.match(src,/120_000/);
+  assert.match(src,/finalize_market_activation/);
+  assert.match(src,/No deterministic 5SIM activation match found/);
+  assert.match(src,/Multiple possible 5SIM activations matched reservation/);
+  assert.match(src,/RECONCILIATION_REQUIRED/);
+});
+
+test('ambiguous response-loss never auto-refunds or chooses arbitrary candidate',()=>{
+  const src=fs.readFileSync('app/api/internal/reconciliation/route.ts','utf8');
+
+  assert.match(src,/matching\.length === 1/);
+  assert.match(src,/matching\.length === 0/);
+  assert.match(src,/Multiple possible 5SIM activations matched reservation/);
+  assert.match(src,/finalize_market_activation/);
+});
+
+
+test('generic legacy expiry never owns the 5sim OTP lifecycle',()=>{
+  const src=fs.readFileSync(
+    'app/api/internal/reconciliation/route.ts',
+    'utf8'
   );
 
-  assert.ok(missingProviderIdBlock, 'missing provider id reconciliation block must exist');
-
-  assert.doesNotMatch(
-    missingProviderIdBlock[1],
-    /refund_market_order/,
-    'ambiguous reserving activation must never be auto-refunded'
-  );
-
-  assert.doesNotMatch(
-    missingProviderIdBlock[1],
-    /status:\s*['"]expired['"]/,
-    'ambiguous reserving activation must not be marked expired'
+  assert.match(src,/p\?\.slug === '5sim'/);
+  assert.match(
+    src,
+    /OTP\/5SIM orders have their own provider-aware lifecycle/
   );
 });
+
+test('OTP expiry uses provider cancellation before refund',()=>{
+  const src=fs.readFileSync(
+    'app/api/internal/reconciliation/route.ts',
+    'utf8'
+  );
+
+  assert.match(src,/claim_activation_expiration/);
+  assert.match(src,/cancelActivation/);
+  assert.match(src,/Provider cancellation failed/);
+  assert.match(src,/RECONCILIATION_REQUIRED/);
+});
+
+test('ambiguous cancellation cannot refund',()=>{
+  const src=fs.readFileSync(
+    'app/api/v1/activations/[id]/route.ts',
+    'utf8'
+  );
+
+  assert.match(src,/Provider order id missing/);
+  assert.match(src,/RECONCILIATION_REQUIRED/);
+  assert.match(src,/finalize_activation_cancellation/);
+});
+
+test('refund checks existing refund ledger before wallet increment',()=>{
+  const src=fs.readFileSync(
+    'supabase/migrations/20260913080000_harden_otp_reconciliation_refund_lifecycle.sql',
+    'utf8'
+  );
+
+  const fn=src.match(
+    /create or replace function public\.refund_market_order[\s\S]*?\$\$;/
+  );
+
+  assert.ok(fn);
+
+  const existing=fn[0].indexOf('if v_refund_exists then');
+  const increment=fn[0].indexOf(
+    'set balance_cents=balance_cents+v_order.price_cents'
+  );
+
+  assert.ok(existing >= 0);
+  assert.ok(increment >= 0);
+  assert.ok(existing < increment);
+});
+
+test('cancellation is row-lock serialized',()=>{
+  const src=fs.readFileSync(
+    'supabase/migrations/20260913080000_harden_otp_reconciliation_refund_lifecycle.sql',
+    'utf8'
+  );
+
+  const fn=src.match(
+    /create or replace function public\.claim_activation_cancellation[\s\S]*?\$\$;/
+  );
+
+  assert.ok(fn);
+  assert.match(fn[0],/for update/);
+  assert.match(fn[0],/cancel_started_at/);
+});
+
+test('reconciliation expiration is row-lock serialized',()=>{
+  const src=fs.readFileSync(
+    'supabase/migrations/20260913080000_harden_otp_reconciliation_refund_lifecycle.sql',
+    'utf8'
+  );
+
+  const fn=src.match(
+    /create or replace function public\.claim_activation_expiration[\s\S]*?\$\$;/
+  );
+
+  assert.ok(fn);
+  assert.match(fn[0],/for update/);
+  assert.match(fn[0],/expiration_started_at/);
+});
+
+test('duplicate Vercel reconciliation cron is removed',()=>{
+  const src=fs.readFileSync('vercel.json','utf8');
+  assert.match(src,/"crons": \[\]/);
+});
+
+test('provider acquisition success cannot fall through to blind local refund', () => {
+  const source = readFileSync('app/api/v1/activations/route.ts', 'utf8')
+
+  assert.match(source, /let providerAcquired = false/)
+  assert.match(source, /providerAcquired = true/)
+  assert.match(
+    source,
+    /if \(providerAcquired \|\| uncertain\)/,
+  )
+  assert.match(source, /RECONCILIATION_REQUIRED/)
+})
+
+test('active cancellation requires a provider order id', () => {
+  const source = readFileSync(
+    'app/api/v1/activations/[id]/route.ts',
+    'utf8',
+  )
+
+  assert.match(
+    source,
+    /\['reserving', 'waiting', 'sms_received'\]\.includes\(current\.status\)/,
+  )
+  assert.match(source, /if \(!c\.provider_order_id\)/)
+  assert.match(source, /RECONCILIATION_REQUIRED/)
+})
+
+test('expiration claim refuses an active cancellation lease', () => {
+  const migration = readFileSync(
+    'supabase/migrations/20260913080000_harden_otp_reconciliation_refund_lifecycle.sql',
+    'utf8',
+  )
+
+  assert.match(
+    migration,
+    /v_order\.cancel_started_at is not null/,
+  )
+  assert.match(
+    migration,
+    /'already_processing'/,
+  )
+})
+
+test('client profile updates cannot change authoritative role or balance fields', () => {
+  const migration = readFileSync(
+    'supabase/migrations/20260913080000_harden_otp_reconciliation_refund_lifecycle.sql',
+    'utf8',
+  )
+
+  assert.match(
+    migration,
+    /profile role is server-authoritative/,
+  )
+  assert.match(
+    migration,
+    /profile balance is server-authoritative/,
+  )
+  assert.match(
+    migration,
+    /drop policy if exists profiles_update_own/,
+  )
+})

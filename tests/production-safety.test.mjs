@@ -98,8 +98,10 @@ for (const file of ['lib/env.ts','app/api/billing/topup/route.ts','app/api/webho
 }
 
 
-test('Vercel cron configuration is Hobby-safe and does not claim exact retry cadence', () => {
-  const v = JSON.parse(read('vercel.json'));
-  assert.equal(v.crons.length, 1);
-  assert.equal(v.crons[0].schedule, '0 0 * * *');
+test('Vercel cron configuration does not duplicate reconciliation scheduling', () => {
+  const vercel = read('vercel.json')
+  const cronEntries = (vercel.match(/"schedule":/g) || []).length
+
+  assert.equal(cronEntries, 0)
+  assert.deepEqual(JSON.parse(vercel), { crons: [] })
 });

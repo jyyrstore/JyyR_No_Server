@@ -82,7 +82,17 @@ export async function POST(request: Request) {
   if (r?.error_code) return errorResponse(String(r.error_code).toUpperCase(), 'Activation cannot be created', 409, requestId);
 
   const orderId = String(r.order_id);
+  let providerAcquired = false;
+
   try {
+    const { error: attemptStampError } = await db
+      .from('orders')
+      .update({ provider_attempt_at: new Date().toISOString() })
+      .eq('id', orderId)
+      .eq('status', 'reserving');
+
+    if (attemptStampError) throw attemptStampError;
+
     const adapter = getOtpProvider('5sim');
     const countryMapping = await db.from('provider_countries').select('provider_country_code').eq('provider_id', offer.providerId).eq('country_id', parsed.data.country_id).maybeSingle();
     const serviceMapping = await db.from('provider_services').select('provider_service_code').eq('provider_id', offer.providerId).eq('service_id', parsed.data.service_id).maybeSingle();
@@ -90,6 +100,15 @@ export async function POST(request: Request) {
       country: countryMapping.data?.provider_country_code ?? country.code,
       service: serviceMapping.data?.provider_service_code ?? service.slug,
     });
+
+    // The external purchase may already exist even if the response is
+    // malformed or the subsequent DB finalize fails.
+    providerAcquired = true;
+
+    if (!activation?.providerOrderId) {
+      throw new Error('PROVIDER_RESPONSE_MISSING_ORDER_ID');
+    }
+
     const final = await db.rpc('finalize_market_activation', {
       p_order_id: orderId,
       p_provider_order_id: activation.providerOrderId,
@@ -104,12 +123,75 @@ export async function POST(request: Request) {
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'Provider acquisition failed';
     const uncertain = /aborted|timeout|timed out|network|fetch failed/i.test(reason);
-    if (uncertain) {
-      await db.from('orders').update({ error_code: 'RECONCILIATION_REQUIRED', error_message: 'Provider outcome is uncertain; reconciliation is required', failure_reason: reason.slice(0, 500) }).eq('id', orderId).eq('status', 'reserving');
-      return errorResponse('RECONCILIATION_REQUIRED', 'Provider outcome is uncertain; the activation will be reconciled before funds are released', 503, requestId);
+
+    // Once 5SIM has acknowledged acquisition, never refund locally without
+    // first reconciling the provider state.
+    if (providerAcquired || uncertain) {
+      await db
+        .from('orders')
+        .update({
+          error_code: 'RECONCILIATION_REQUIRED',
+          error_message:
+            'Provider outcome is uncertain; reconciliation is required',
+          failure_reason: reason.slice(0, 500),
+        })
+        .eq('id', orderId)
+        .eq('status', 'reserving');
+
+      return errorResponse(
+        'RECONCILIATION_REQUIRED',
+        'Provider outcome is uncertain; the activation will be reconciled before funds are released',
+        503,
+        requestId,
+      );
     }
-    await db.rpc('refund_market_order', { p_order_id: orderId, p_reason: `Provider acquisition failed: ${reason.slice(0, 200)}` });
-    await db.from('orders').update({ status: 'failed', failure_reason: reason.slice(0, 500), error_code: 'PROVIDER_ERROR', error_message: 'Provider acquisition failed' }).eq('id', orderId).in('status', ['reserving']);
-    return errorResponse('PROVIDER_ERROR', 'Provider acquisition failed and the purchase was refunded', 502, requestId);
+
+    const { data: refunded, error: refundError } = await db.rpc(
+      'refund_market_order',
+      {
+        p_order_id: orderId,
+        p_reason: `Provider acquisition failed: ${reason.slice(0, 200)}`,
+      },
+    );
+
+    const refundResult = Array.isArray(refunded) ? refunded[0] : refunded;
+
+    if (refundError || !refundResult?.ok) {
+      await db
+        .from('orders')
+        .update({
+          error_code: 'RECONCILIATION_REQUIRED',
+          error_message:
+            'Provider acquisition failed but refund processing requires reconciliation',
+          failure_reason: reason.slice(0, 500),
+        })
+        .eq('id', orderId)
+        .eq('status', 'reserving');
+
+      return errorResponse(
+        'RECONCILIATION_REQUIRED',
+        'Refund processing is pending reconciliation',
+        503,
+        requestId,
+      );
+    }
+
+    await db
+      .from('orders')
+      .update({
+        status: 'failed',
+        failure_reason: reason.slice(0, 500),
+        error_code: 'PROVIDER_ERROR',
+        error_message: 'Provider acquisition failed',
+      })
+      .eq('id', orderId)
+      .eq('status', 'reserving');
+
+    return errorResponse(
+      'PROVIDER_ERROR',
+      'Provider acquisition failed and the purchase was refunded',
+      502,
+      requestId,
+    );
   }
 }

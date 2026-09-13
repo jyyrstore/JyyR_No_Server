@@ -1,5 +1,12 @@
 import { serverEnv } from '@/lib/env';
-import type { OtpActivationProvider, OtpProviderActivation, OtpProviderSms, OtpProviderStatus, OtpProviderStock } from '@/types/otp-provider';
+import type {
+  OtpActivationProvider,
+  OtpProviderActivation,
+  OtpProviderActivationCandidate,
+  OtpProviderSms,
+  OtpProviderStatus,
+  OtpProviderStock,
+} from '@/types/otp-provider';
 import { extractOtp } from '@/services/marketplace';
 
 const API = 'https://5sim.net/v1';
@@ -100,6 +107,97 @@ export class FiveSimProvider implements OtpActivationProvider {
     if (status === 'TIMEOUT') return 'TIMEOUT';
     if (status === 'BANNED') return 'BANNED';
     return 'PENDING';
+  }
+
+  async findRecentActivations(params: {
+    country: string;
+    service: string;
+    since: string;
+    until: string;
+  }): Promise<OtpProviderActivationCandidate[]> {
+    const rows = await this.request<Array<{
+      id?: number | string;
+      phone?: string;
+      operator?: string;
+      product?: string;
+      price?: number | string;
+      status?: string;
+      expires?: string;
+      created_at?: string;
+      country?: string;
+    }>>(
+      '/user/orders?category=activation&limit=100&offset=0&order=id&reverse=true',
+    );
+
+    const sinceMs = new Date(params.since).getTime();
+    const untilMs = new Date(params.until).getTime();
+
+    if (
+      !Number.isFinite(sinceMs) ||
+      !Number.isFinite(untilMs) ||
+      sinceMs > untilMs
+    ) {
+      throw new Error('Invalid 5SIM recovery window');
+    }
+
+    return (Array.isArray(rows) ? rows : [])
+      .map((row) => {
+        if (row.id == null || !row.created_at) return null;
+
+        const createdAt = new Date(row.created_at);
+        if (Number.isNaN(createdAt.getTime())) return null;
+
+        const country = String(row.country ?? '').toLowerCase();
+        const product = String(row.product ?? '').toLowerCase();
+
+        if (country !== params.country.toLowerCase()) return null;
+        if (product !== params.service.toLowerCase()) return null;
+
+        const createdMs = createdAt.getTime();
+        if (createdMs < sinceMs || createdMs > untilMs) return null;
+
+        const rawStatus = String(row.status ?? '').toUpperCase();
+
+        const statusMap: Record<string, OtpProviderStatus> = {
+          PENDING: 'PENDING',
+          RECEIVED: 'RECEIVED',
+          FINISHED: 'FINISHED',
+          CANCELED: 'CANCELED',
+          TIMEOUT: 'TIMEOUT',
+          BANNED: 'BANNED',
+          EXPIRED: 'EXPIRED',
+          FAILED: 'FAILED',
+        };
+
+        const parsedPrice =
+          row.price != null ? Number(row.price) : NaN;
+
+        return {
+          providerOrderId: String(row.id),
+          phoneNumber: String(row.phone ?? ''),
+          country,
+          operator: row.operator ? String(row.operator) : undefined,
+          product,
+          priceCents: Number.isFinite(parsedPrice)
+            ? Math.round(parsedPrice * 100)
+            : undefined,
+          createdAt: createdAt.toISOString(),
+          expiresAt: row.expires
+            ? new Date(row.expires).toISOString()
+            : undefined,
+          status: statusMap[rawStatus] ?? 'PENDING',
+          metadata: {
+            source: '5sim_order_history',
+          },
+        };
+      })
+      .filter(
+        (candidate): candidate is NonNullable<typeof candidate> =>
+          Boolean(
+            candidate?.providerOrderId &&
+            candidate.phoneNumber
+          ),
+      );
   }
 
   async getSms(providerOrderId: string): Promise<OtpProviderSms[]> {
